@@ -8,9 +8,13 @@ import './Dashboard.css'
 
 export default function Dashboard({ socket, sessionId, setSessionId, status, progress, logs, errorMessage, productionReport, onUploadStart, onUploadComplete, onStop }) {
   const [uploadedFile, setUploadedFile] = useState(null)
-  const [deploySource, setDeploySource] = useState(() => 
-    localStorage.getItem('github_token') ? 'github' : 'upload'
-  ) // 'upload' or 'github'
+  const [deploySource, setDeploySource] = useState(() => {
+    const urlParams = new URLSearchParams(window.location.search)
+    if (urlParams.has('github_token') || urlParams.has('github_error') || localStorage.getItem('github_token')) {
+      return 'github'
+    }
+    return 'upload'
+  }) // 'upload' or 'github'
 
   const handleUploadStart = (file) => {
     setUploadedFile(file)

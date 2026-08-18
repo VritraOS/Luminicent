@@ -16,26 +16,36 @@ import { analyzeProduction } from '../utils/productionAnalyzer.js';
 
 const router = express.Router();
 
-// Initialize Passport Strategy for GitHub
-const clientId = process.env.GITHUB_CLIENT_ID;
-const clientSecret = process.env.GITHUB_CLIENT_SECRET;
-const redirectUri = process.env.GITHUB_REDIRECT_URI || 'http://localhost:5000/api/github/callback';
-const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+const getGithubConfig = (req) => {
+  const clientId = process.env.GITHUB_CLIENT_ID;
+  const clientSecret = process.env.GITHUB_CLIENT_SECRET;
 
-if (clientId && clientId !== 'your_github_client_id_here') {
+  const host = req ? (req.get('x-forwarded-host') || req.get('host')) : null;
+  const protocol = req ? (req.get('x-forwarded-proto') || req.protocol) : 'http';
+  const basePath = req && req.baseUrl ? req.baseUrl : '/api/github';
+
+  const defaultCallback = host ? `${protocol}://${host}${basePath}/callback` : `http://localhost:5000${basePath}/callback`;
+  const redirectUri = process.env.GITHUB_REDIRECT_URI || defaultCallback;
+
+  const defaultFrontend = host ? `${protocol}://${host.replace(':5000', ':5173')}` : 'http://localhost:5173';
+  const frontendUrl = process.env.FRONTEND_URL || defaultFrontend;
+
+  return { clientId, clientSecret, redirectUri, frontendUrl };
+};
+
+const initialConfig = getGithubConfig();
+if (initialConfig.clientId && initialConfig.clientId !== 'your_github_client_id_here') {
   passport.use(new GitHubStrategy({
-      clientID: clientId,
-      clientSecret: clientSecret,
-      callbackURL: redirectUri
+      clientID: initialConfig.clientId,
+      clientSecret: initialConfig.clientSecret,
+      callbackURL: initialConfig.redirectUri
     },
     function(accessToken, refreshToken, profile, done) {
-      // Attach accessToken to profile so we can pass it to the frontend
       profile.accessToken = accessToken;
       return done(null, profile);
     }
   ));
 } else {
-  // Fallback dummy strategy to prevent startup crash if not configured
   passport.use(new GitHubStrategy({
       clientID: 'dummy_id',
       clientSecret: 'dummy_secret',
@@ -170,18 +180,23 @@ const cleanupPath = (targetPath) => {
 };
 
 // Route: Redirect to GitHub authorize page
-router.get('/login', (req, res, next) => {
-  const currentClientId = clientId;
-  if (!currentClientId || currentClientId === 'your_github_client_id_here') {
-    const errorMessage = encodeURIComponent('GitHub OAuth is not configured on the server. Use a Personal Access Token instead.');
-    return res.redirect(`${frontendUrl}/github-success?github_error=${errorMessage}`);
+router.get('/login', (req, res) => {
+  const { clientId, redirectUri, frontendUrl } = getGithubConfig(req);
+  if (!clientId || clientId === 'your_github_client_id_here') {
+    const errorMessage = encodeURIComponent('GitHub OAuth is not configured on the server. Please configure GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET in environment variables.');
+    return res.redirect(`${frontendUrl}/?github_error=${errorMessage}`);
   }
 
-  const githubURL =
-    `https://github.com/login/oauth/authorize` +
-    `?client_id=${currentClientId}` +
-    `&redirect_uri=${encodeURIComponent(redirectUri)}` +
-    `&scope=repo`;
+  let githubURL = `https://github.com/login/oauth/authorize?client_id=${clientId}&scope=repo`;
+  
+  // Only attach redirect_uri if explicitly requested via query param or if STRICT_REDIRECT_URI is set.
+  // Omitting redirect_uri allows GitHub to use the callback URL registered in the OAuth app settings on github.com.
+  if (req.query.redirect_uri) {
+    githubURL += `&redirect_uri=${encodeURIComponent(req.query.redirect_uri)}`;
+  } else if (process.env.STRICT_REDIRECT_URI === 'true' && process.env.GITHUB_REDIRECT_URI) {
+    githubURL += `&redirect_uri=${encodeURIComponent(process.env.GITHUB_REDIRECT_URI)}`;
+  }
+
   console.log('Redirecting to GitHub OAuth:', githubURL);
   res.redirect(githubURL);
 });
@@ -189,28 +204,50 @@ router.get('/login', (req, res, next) => {
 // Route: Handle GitHub redirect callback
 router.get('/callback', async (req, res) => {
   const { code } = req.query;
+  const { clientId, clientSecret, redirectUri, frontendUrl } = getGithubConfig(req);
 
   if (!clientId || clientId === 'your_github_client_id_here' || !clientSecret) {
     const errorMessage = encodeURIComponent('GitHub OAuth client credentials are missing or invalid.');
-    return res.redirect(`${frontendUrl}/github-success?github_error=${errorMessage}`);
+    if (req.headers.accept?.includes('application/json')) {
+      return res.status(400).json({ error: 'GitHub OAuth client credentials are missing or invalid.' });
+    }
+    return res.redirect(`${frontendUrl}/?github_error=${errorMessage}`);
   }
 
   if (!code) {
     const errorMessage = encodeURIComponent('Authorization code is required.');
-    return res.redirect(`${frontendUrl}/github-success?github_error=${errorMessage}`);
+    if (req.headers.accept?.includes('application/json')) {
+      return res.status(400).json({ error: 'Authorization code is required.' });
+    }
+    return res.redirect(`${frontendUrl}/?github_error=${errorMessage}`);
   }
 
   try {
-    const tokenResponse = await axios.post('https://github.com/login/oauth/access_token', {
+    let tokenResponse;
+    // 1st attempt: exchange code without redirect_uri (works when redirect_uri was omitted during authorize)
+    tokenResponse = await axios.post('https://github.com/login/oauth/access_token', {
       client_id: clientId,
       client_secret: clientSecret,
-      code,
-      redirect_uri: redirectUri
+      code
     }, {
-      headers: {
-        Accept: 'application/json'
-      }
+      headers: { Accept: 'application/json' }
     });
+
+    // 2nd attempt: if GitHub requires matching redirect_uri, try passing redirectUri
+    if (tokenResponse.data.error && redirectUri) {
+      console.log('Initial token exchange note:', tokenResponse.data.error, '- retrying with redirect_uri');
+      const retryResponse = await axios.post('https://github.com/login/oauth/access_token', {
+        client_id: clientId,
+        client_secret: clientSecret,
+        code,
+        redirect_uri: redirectUri
+      }, {
+        headers: { Accept: 'application/json' }
+      });
+      if (!retryResponse.data.error) {
+        tokenResponse = retryResponse;
+      }
+    }
 
     console.log('TOKEN RESPONSE:', tokenResponse.data);
 
@@ -223,11 +260,18 @@ router.get('/callback', async (req, res) => {
       throw new Error('GitHub did not return an access token.');
     }
 
-    res.redirect(`${frontendUrl}/github-success?github_token=${encodeURIComponent(token)}`);
+    if (req.headers.accept?.includes('application/json')) {
+      return res.json({ success: true, token });
+    }
+
+    res.redirect(`${frontendUrl}/?github_token=${encodeURIComponent(token)}`);
   } catch (error) {
     console.error('OAuth Callback Error:', error);
-    const errorMessage = encodeURIComponent(error.message || 'Unknown OAuth callback error');
-    res.redirect(`${frontendUrl}/github-success?github_error=${errorMessage}`);
+    const errorMessage = error.message || 'Unknown OAuth callback error';
+    if (req.headers.accept?.includes('application/json')) {
+      return res.status(500).json({ error: errorMessage });
+    }
+    res.redirect(`${frontendUrl}/?github_error=${encodeURIComponent(errorMessage)}`);
   }
 });
 

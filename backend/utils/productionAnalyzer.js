@@ -1,8 +1,8 @@
 import fs from "fs";
 import path from "path";
-import Docker from "dockerode";
+import { getDockerInstance } from "./dockerOrchestrator.js";
 
-const docker = new Docker();
+const docker = getDockerInstance();
 
 /**
  * Production Readiness Analyzer
@@ -225,7 +225,7 @@ export async function analyzeProduction(
         const images = await docker.listImages();
 
         const imageExists = images.find(img =>
-            (img.RepoTags || []).includes(`${imageName}:latest`)
+            (img.RepoTags || []).some(tag => tag === imageName || tag === `${imageName}:latest`)
         );
 
         if (!imageExists) {

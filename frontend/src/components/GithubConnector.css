@@ -130,6 +130,49 @@
   text-align: center;
 }
 
+.auth-error-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  background: rgba(239, 68, 68, 0.12);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  border-radius: 12px;
+  padding: 12px 14px;
+  margin-top: 16px;
+  margin-bottom: 12px;
+  width: 100%;
+  text-align: left;
+}
+
+.error-text-content {
+  flex: 1;
+}
+
+.error-title {
+  font-weight: 700;
+  color: #fca5a5;
+  margin: 0 0 3px 0;
+  font-size: 0.85rem;
+}
+
+.error-desc {
+  color: #fecaca;
+  font-size: 0.8rem;
+  margin: 0;
+  line-height: 1.4;
+}
+
+.close-error-btn {
+  background: transparent;
+  border: none;
+  color: #fca5a5;
+  font-size: 1.1rem;
+  cursor: pointer;
+  padding: 0;
+  margin-left: auto;
+  line-height: 1;
+}
+
 .pat-info-accordion {
   width: 100%;
   margin-top: 20px;

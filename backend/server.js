@@ -12,10 +12,28 @@ import passport from "passport";
 dotenv.config();
 
 const app = express();
+const allowedOrigins = process.env.CORS_ORIGIN
+  ? process.env.CORS_ORIGIN.split(',')
+  : [
+      'http://localhost:5173',
+      'http://localhost:3000',
+      'http://localhost:5000',
+      process.env.FRONTEND_URL
+    ].filter(Boolean);
+
+const checkOrigin = (origin, callback) => {
+  if (!origin) return callback(null, true);
+  if (process.env.NODE_ENV === 'production' && process.env.CORS_ORIGIN) {
+    if (allowedOrigins.includes(origin)) return callback(null, true);
+    return callback(new Error('Not allowed by CORS'));
+  }
+  return callback(null, true);
+};
+
 const server = http.createServer(app);
 const io = new socketIO(server, {
   cors: {
-    origin: 'http://localhost:5173',
+    origin: checkOrigin,
     methods: ['GET', 'POST'],
     credentials: true
   }
@@ -27,8 +45,8 @@ const PORT = process.env.PORT || 5000;
 
 // Middleware
 app.use(cors({
-    origin: "http://localhost:5173",
-    credentials: true
+  origin: checkOrigin,
+  credentials: true
 }));
 app.use(express.json());
 app.use(express.static('public'));
@@ -44,8 +62,9 @@ app.use((req, res, next) => {
 // Upload routes
 app.use('/api', uploadRoutes);
 
-// GitHub Integration routes
+// GitHub Integration routes (supports both /api/github and /auth/github callback paths)
 app.use('/api/github', githubRoutes);
+app.use('/auth/github', githubRoutes);
 
 // Socket.IO connection handler
 io.on('connection', (socket) => {

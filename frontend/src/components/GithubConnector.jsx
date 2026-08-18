@@ -1,9 +1,8 @@
 import { useState, useEffect } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { BACKEND_URL } from '../config'
 import './GithubConnector.css'
 
 export default function GithubConnector({ onDeployStart, onDeployComplete }) {
-  const navigate = useNavigate()
   const [token, setToken] = useState(localStorage.getItem('github_token') || '')
   const [user, setUser] = useState(null)
   const [repos, setRepos] = useState([])
@@ -28,25 +27,46 @@ export default function GithubConnector({ onDeployStart, onDeployComplete }) {
     }
   }, [token])
 
-  // Watch for token changes in URL (returned from backend OAuth redirect)
+  // Watch for token or auth code changes in URL (returned from GitHub OAuth redirect)
   useEffect(() => {
-    const handleUrlToken = () => {
+    const handleUrlParams = async () => {
       const urlParams = new URLSearchParams(window.location.search)
       const urlToken = urlParams.get('github_token')
       const urlError = urlParams.get('github_error')
+      const urlCode = urlParams.get('code')
 
       if (urlToken) {
         localStorage.setItem('github_token', urlToken)
         setToken(urlToken)
         // Clean up URL query parameters
         window.history.replaceState({}, document.title, window.location.pathname)
+      } else if (urlCode) {
+        // If GitHub redirected directly to frontend with ?code=...
+        window.history.replaceState({}, document.title, window.location.pathname)
+        setLoading(true)
+        try {
+          const res = await fetch(`/api/github/callback?code=${urlCode}`, {
+            headers: { Accept: 'application/json' }
+          })
+          const data = await res.json()
+          if (data.token) {
+            localStorage.setItem('github_token', data.token)
+            setToken(data.token)
+          } else if (data.error) {
+            setAuthError(data.error)
+          }
+        } catch (err) {
+          setAuthError('Failed to exchange GitHub authorization code: ' + err.message)
+        } finally {
+          setLoading(false)
+        }
       } else if (urlError) {
         setAuthError(decodeURIComponent(urlError))
         window.history.replaceState({}, document.title, window.location.pathname)
       }
     }
 
-    handleUrlToken()
+    handleUrlParams()
   }, [])
 
   const fetchUserData = async (authToken) => {
@@ -84,7 +104,7 @@ export default function GithubConnector({ onDeployStart, onDeployComplete }) {
   }
 
   const handleGithubLogin = () => {
-    navigate('/github-login')
+    window.location.href = `${BACKEND_URL}/api/github/login`
   }
 
   const handlePatSubmit = (e) => {
@@ -230,7 +250,16 @@ export default function GithubConnector({ onDeployStart, onDeployComplete }) {
             </button>
           </form>
 
-          {authError && <p className="error-text">{authError}</p>}
+          {authError && (
+            <div className="auth-error-banner">
+              <span className="error-icon">⚠️</span>
+              <div className="error-text-content">
+                <p className="error-title">GitHub OAuth Status</p>
+                <p className="error-desc">{authError}</p>
+              </div>
+              <button className="close-error-btn" type="button" onClick={() => setAuthError('')}>×</button>
+            </div>
+          )}
 
           <div className="pat-info-accordion">
             <button 
