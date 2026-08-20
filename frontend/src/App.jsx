@@ -1,9 +1,8 @@
 import { useState, useEffect, useRef } from 'react'
 import { io } from 'socket.io-client'
-import { Routes, Route } from 'react-router-dom'
+import { Routes, Route, Navigate } from 'react-router-dom'
 import Dashboard from './components/Dashboard'
-import GithubLogin from './pages/GithubLogin'
-import GithubSuccess from './pages/GithubSuccess'
+import { BACKEND_URL } from './config'
 import './App.css'
 
 function App() {
@@ -47,7 +46,7 @@ function App() {
       appendLog(data.type || 'status', data)
     }
 
-    const newSocket = io('http://localhost:5000', {
+    const newSocket = io(BACKEND_URL, {
       path: '/socket.io',
       transports: ['polling', 'websocket'],
       reconnection: true,
@@ -229,14 +228,7 @@ function App() {
           </div>
         }
       />
-      <Route 
-        path="/github-login" 
-        element={<GithubLogin />} 
-      />
-      <Route 
-        path="/github-success" 
-        element={<GithubSuccess />} 
-      />
+      <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   )
 }

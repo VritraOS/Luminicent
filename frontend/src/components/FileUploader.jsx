@@ -1,4 +1,5 @@
 import { useState, useRef } from 'react'
+import { BACKEND_URL } from '../config'
 import './FileUploader.css'
 
 export default function FileUploader({ socket, onUploadStart, onUploadComplete }) {
@@ -48,7 +49,7 @@ export default function FileUploader({ socket, onUploadStart, onUploadComplete }
         formData.append('sessionId', sessionId)
       }
 
-      const response = await fetch('http://localhost:5000/api/upload', {
+      const response = await fetch(`${BACKEND_URL}/api/upload`, {
         method: 'POST',
         body: formData
       })

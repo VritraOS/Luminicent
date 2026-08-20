@@ -174,7 +174,6 @@ const cleanupPath = (targetPath) => {
 // Route: Redirect to GitHub authorize page
 router.get('/login', (req, res) => {
   const clientId = process.env.GITHUB_CLIENT_ID;
-  const redirectUri = process.env.GITHUB_REDIRECT_URI;
   
   if (!clientId || clientId === 'your_github_client_id_here') {
     return res.status(501).json({
@@ -183,7 +182,12 @@ router.get('/login', (req, res) => {
     });
   }
 
-  const githubAuthUrl = `https://github.com/login/oauth/authorize?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&scope=repo,user`;
+  let githubAuthUrl = `https://github.com/login/oauth/authorize?client_id=${clientId}&scope=repo,user`;
+  if (req.query.redirect_uri) {
+    githubAuthUrl += `&redirect_uri=${encodeURIComponent(req.query.redirect_uri)}`;
+  } else if (process.env.STRICT_REDIRECT_URI === 'true' && process.env.GITHUB_REDIRECT_URI) {
+    githubAuthUrl += `&redirect_uri=${encodeURIComponent(process.env.GITHUB_REDIRECT_URI)}`;
+  }
   res.redirect(githubAuthUrl);
 });
 
@@ -200,21 +204,35 @@ router.get('/callback', async (req, res) => {
   }
 
   try {
-    const tokenResponse = await postJson('https://github.com/login/oauth/access_token', {
+    let tokenResponse = await postJson('https://github.com/login/oauth/access_token', {
       client_id: clientId,
       client_secret: clientSecret,
-      code,
-      redirect_uri: redirectUri
+      code
     });
+
+    if (tokenResponse.error && redirectUri) {
+      tokenResponse = await postJson('https://github.com/login/oauth/access_token', {
+        client_id: clientId,
+        client_secret: clientSecret,
+        code,
+        redirect_uri: redirectUri
+      });
+    }
 
     if (tokenResponse.error) {
       throw new Error(tokenResponse.error_description || tokenResponse.error);
     }
 
     const token = tokenResponse.access_token;
+    if (req.headers.accept?.includes('application/json')) {
+      return res.json({ success: true, token });
+    }
     res.redirect(`${frontendUrl}?github_token=${token}`);
   } catch (error) {
     console.error('OAuth Callback Error:', error);
+    if (req.headers.accept?.includes('application/json')) {
+      return res.status(500).json({ error: error.message });
+    }
     res.redirect(`${frontendUrl}?github_error=${encodeURIComponent(error.message)}`);
   }
 });

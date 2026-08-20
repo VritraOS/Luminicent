@@ -3,7 +3,20 @@ import fs from 'fs'
 import path from 'path'
 import tar from "tar-fs";
 
-const docker = new Docker()
+export const getDockerInstance = () => {
+  if (process.env.DOCKER_HOST) {
+    return new Docker();
+  }
+  if (process.platform === 'win32') {
+    if (fs.existsSync('//./pipe/dockerDesktopLinuxEngine')) {
+      return new Docker({ socketPath: '//./pipe/dockerDesktopLinuxEngine' });
+    }
+    return new Docker({ socketPath: '//./pipe/docker_engine' });
+  }
+  return new Docker({ socketPath: '/var/run/docker.sock' });
+};
+
+const docker = getDockerInstance();
 
 class DockerOrchestrator {
   constructor(io) {
@@ -162,7 +175,7 @@ class DockerOrchestrator {
     try {
       await new Promise((resolve, reject) => docker.ping((err) => err ? reject(err) : resolve()))
     } catch (err) {
-      const errMsg = `Docker daemon not available: ${err.message || err}`
+      const errMsg = `Docker Desktop is not running or initializing. Please start Docker Desktop on your computer.`
       this.emitStatus(sessionId, {
         status: 'BUILD_FAILED',
         stage: 'build',
